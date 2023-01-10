@@ -2,7 +2,7 @@ version: '3'
 services:
   traefik:
     image: traefik:latest
-    command: --api.insecure=true --providers.docker
+#    command: --api.insecure=true --providers.docker
     environment:
       - TRAEFIK_PROVIDERS_DOCKER=true
       - TRAEFIK_PROVIDERS_REDIS_ENDPOINTS=redis:6379
@@ -33,9 +33,10 @@ services:
       - redis-data:/data
     networks:
       - pylon
+    container_name: carrier-redis
 
   rabbitmq:
-    image: rabbitmq:3.7-management
+    image: rabbitmq:3.11-management
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
@@ -72,6 +73,7 @@ services:
       - POSTGRES_INITDB_ARGS=${POSTGRES_INITDB_ARGS}
     networks:
       - pylon
+    container_name: carrier-postgres
 
   mongo:
     image: mongo
@@ -91,6 +93,7 @@ services:
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
     networks:
       - pylon
+    container_name: carrier-mongo
 
   vault:
     image: vault:latest
@@ -109,6 +112,7 @@ services:
       - pylon
     depends_on:
       - postgres
+    container_name: carrier-vault
 
   minio:
     image: minio/minio:latest
@@ -128,6 +132,7 @@ services:
       - minio-data:/data
     networks:
       - pylon
+    container_name: carrier-minio
 
   influx:
     image: influxdb:1.8
@@ -146,6 +151,7 @@ services:
       - 'traefik.enable=false'
     networks:
       - pylon
+    container_name: carrier-influx
 
   interceptor:
     image: getcarrier/interceptor:latest
@@ -169,6 +175,9 @@ services:
       - pylon
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+#    labels:
+#      - 'traefik.enable=false'
+    container_name: carrier-interceptor
 
   interceptor_internal:
     image: getcarrier/interceptor:latest
@@ -191,7 +200,9 @@ services:
       - pylon
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-
+#    labels:
+#      - 'traefik.enable=false'
+    container_name: carrier-interceptor_internal
 
   keycloak:
     image: jboss/keycloak:9.0.0
@@ -226,9 +237,10 @@ services:
       - 'traefik.enable=true'
       - 'traefik.http.routers.keycloak.rule=PathPrefix(`/auth`)'
       - 'traefik.http.services.keycloak.loadbalancer.server.port=8080'
+    container_name: carrier-keycloak
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:2.3.0
     logging:
       driver: "json-file"
       options:
@@ -245,6 +257,7 @@ services:
       - 'traefik.http.routers.loki.rule=PathPrefix(`/loki`)'
       - 'traefik.http.services.loki.loadbalancer.server.port=3100'
       - 'carrier=loki'
+    container_name: carrier-loki
 
   grafana:
     image: grafana/grafana:latest
@@ -285,6 +298,7 @@ services:
       - 'traefik.http.routers.grafana.middlewares=grafana-auth@docker'
       - 'carrier=grafana'
     user: root
+    container_name: carrier-grafana
 
   pylon:
     image: getcarrier/pylon:latest
@@ -294,8 +308,7 @@ services:
         max-file: "5"
         max-size: "10m"
     restart: unless-stopped
-    container_name: carrier-pylon
-    user: ${UID}
+    user: $UID
     depends_on:
       - postgres
       - traefik
@@ -319,6 +332,7 @@ services:
       - 'traefik.http.middlewares.pylon-auth.forwardauth.address=http://pylon_auth:8080/forward-auth/auth?target=rpc'
       - 'traefik.http.middlewares.pylon-auth.forwardauth.authResponseHeaders=X-Auth-Type,X-Auth-ID,X-Auth-Reference'
       - 'traefik.http.routers.pylon.middlewares=pylon-auth@docker'
+    container_name: carrier-pylon
 
   pylon_auth:
     image: getcarrier/pylon:latest
@@ -328,8 +342,7 @@ services:
         max-file: "5"
         max-size: "10m"
     restart: unless-stopped
-    container_name: carrier-pylon-auth
-    user: ${UID}
+    user: $UID
     depends_on:
       - postgres
       - traefik
@@ -345,12 +358,14 @@ services:
       - .env
     environment:
       - CORE_CONFIG_SEED=file:/data/config/pylon_auth.yml
+      - SERVER_NAME=$DEV_IP
     networks:
       - pylon
     labels:
       - 'traefik.enable=true'
       - 'traefik.http.routers.pylon-auth.rule=PathPrefix(`/forward-auth`)'
       - 'traefik.http.services.pylon-auth.loadbalancer.server.port=8080'
+    container_name: carrier-pylon-auth
 
   pylon_worker:
     image: getcarrier/pylon:latest
@@ -360,8 +375,7 @@ services:
         max-file: "5"
         max-size: "10m"
     restart: unless-stopped
-    container_name: carrier-pylon-worker
-    user: ${UID}
+    user: $UID
     depends_on:
       - traefik
       - loki
@@ -380,6 +394,7 @@ services:
       - pylon
     labels:
       - 'traefik.enable=false'
+    container_name: carrier-pylon-worker
 
 volumes:
   postgre-data:
