@@ -1,7 +1,7 @@
 version: '3'
 services:
   traefik:
-    image: traefik:picodon
+    image: traefik:cantal
     environment:
       - TRAEFIK_PROVIDERS_DOCKER=true
       - TRAEFIK_PROVIDERS_REDIS_ENDPOINTS=redis:6379
@@ -9,15 +9,17 @@ services:
       - TRAEFIK_PROVIDERS_REDIS_PASSWORD=${REDIS_PASSWORD}
       - TRAEFIK_API_DASHBOARD=true
       - TRAEFIK_PING_MANUALROUTING=true
-      - TRAEFIK_ENTRYPOINTS_HTTP_ADDRESS=:80
-      - TRAEFIK_ENTRYPOINTS_HTTP_FORWARDEDHEADERS_TRUSTEDIPS=127.0.0.1/32
       - TRAEFIK_LOG_FORMAT=common
       - TRAEFIK_LOG_LEVEL=DEBUG
     networks:
       - pylon
     ports:
       - 80:80
+      - 443:443
     volumes:
+      - ./config/traefik/traefik.toml:/etc/traefik/traefik.toml
+      - ./config/traefik/ssl.toml:/etc/traefik/ssl.toml
+      - ./config/traefik/config:/config
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - redis
@@ -28,7 +30,7 @@ services:
     ports:
       - 6379:6379
     volumes:
-      - redis-data:/data
+      - ${VOLUMES_PATH}/redis:/data
     networks:
       - pylon
     container_name: carrier-redis
@@ -44,8 +46,17 @@ services:
     ports:
       - 15672:15672
       - 5672:5672
+#    labels:
+#      - 'traefik.enable=true'
+#      - 'traefik.http.routers.rabbitmq.rule=Host(`$APP_DOMAIN`) && PathPrefix(`/rabbitmq`)'
+#      - 'traefik.http.routers.rabbitmq.middlewares=strip-rabbitmq'
+#      - 'traefik.http.middlewares.strip-rabbitmq.stripprefix.prefixes=/rabbitmq'
+#      - 'traefik.http.services.rabbitmq.loadbalancer.server.port=15672'
+#      - 'traefik.http.routers.rabbitmq.tls=true'
+#      - 'traefik.http.routers.rabbitmq.tls.certresolver=le'
+#      - 'carrier=rabbitmq'
     volumes:
-      - rabbit-data:/var/lib/rabbitmq
+      - ${VOLUMES_PATH}/rabbitmq:/var/lib/rabbitmq/mnesia
     depends_on:
       - redis
     container_name: carrier-rabbit
@@ -62,7 +73,7 @@ services:
       - 5432:5432
     container_name: carrier-postgres
     volumes:
-      - postgre-data:/var/lib/postgresql/data
+      - ${VOLUMES_PATH}/postgre:/var/lib/postgresql/data
       - ./config/extras/postgre_schemas.sh:/docker-entrypoint-initdb.d/postgre_schemas.sh
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
@@ -85,7 +96,7 @@ services:
       - 27017:27017
     container_name: carrier-mongo
     volumes:
-      - mongo-data:/data/db
+      - ${VOLUMES_PATH}/mongo:/data/db
     environment:
       - MONGO_INITDB_DATABASE=${MONGO_DB}
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
@@ -127,7 +138,7 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_API_SELECT_PARQUET=on
     volumes:
-      - minio-data:/data
+      - ${VOLUMES_PATH}/minio:/data
     networks:
       - pylon
     container_name: carrier-minio
@@ -142,7 +153,7 @@ services:
       - INFLUXDB_HTTP_ENABLED=$INFLUXDB_HTTP_ENABLED
       - INFLUXDB_DATA_MAX_SERIES_PER_DATABASE=$INFLUXDB_DATA_MAX_SERIES_PER_DATABASE
     volumes:
-      - influx-data:/var/lib/influxdb
+      - ${VOLUMES_PATH}/influx:/var/lib/influxdb
     ports:
       - 8086:8086
     labels:
@@ -152,7 +163,6 @@ services:
     container_name: carrier-influx
 
   interceptor:
-#    platform: linux/amd64
     image: getcarrier/interceptor:latest
     logging:
       driver: "json-file"
@@ -177,7 +187,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   interceptor_internal:
-#    platform: linux/amd64
     image: getcarrier/interceptor:latest
     logging:
       driver: "json-file"
@@ -202,8 +211,7 @@ services:
 
 
   keycloak:
-    image: jboss/keycloak:9.0.0
-#    image: getcarrier/keycloak:9.0.0-arm
+    image: aspect13/keycloak:9.0.0
     logging:
       driver: "json-file"
       options:
@@ -234,8 +242,11 @@ services:
       - 8081:8080
     labels:
       - 'traefik.enable=true'
-      - 'traefik.http.routers.keycloak.rule=PathPrefix(`/auth`)'
+      - 'traefik.http.routers.keycloak.rule=Host(`$APP_DOMAIN`) && PathPrefix(`/auth`)'
+      - 'traefik.http.routers.keycloak.tls=true'
+      - 'traefik.http.routers.keycloak.tls.certresolver=le'
       - 'traefik.http.services.keycloak.loadbalancer.server.port=8080'
+      - 'carrier=keycloak'
 
   loki:
     image: grafana/loki:2.3.0
@@ -252,8 +263,10 @@ services:
     command: -config.file=/etc/loki/local-config.yaml -table-manager.retention-period=$RETENTION_PERIOD -table-manager.retention-deletes-enabled=$RETENTION_DELETES_ENABLE
     labels:
       - 'traefik.enable=true'
-      - 'traefik.http.routers.loki.rule=PathPrefix(`/loki`)'
+      - 'traefik.http.routers.loki.rule=Host(`$APP_DOMAIN`) && PathPrefix(`/loki`)'
       - 'traefik.http.services.loki.loadbalancer.server.port=3100'
+      - 'traefik.http.routers.loki.tls=true'
+      - 'traefik.http.routers.loki.tls.certresolver=le'
       - 'carrier=loki'
     container_name: carrier-loki
 
@@ -268,7 +281,7 @@ services:
     depends_on:
       - influx
     volumes:
-      - grafana-data:/var/lib/grafana
+      - ${VOLUMES_PATH}/grafana:/var/lib/grafana
     environment:
       - GF_PANELS_DISABLE_SANITIZE_HTML=$GF_PANELS_DISABLE_SANITIZE_HTML
       - GF_AUTH_PROXY_ENABLED=$GF_AUTH_PROXY_ENABLED
@@ -289,8 +302,10 @@ services:
       - pylon
     labels:
       - 'traefik.enable=true'
-      - 'traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)'
+      - 'traefik.http.routers.grafana.rule=Host(`$APP_DOMAIN`) && PathPrefix(`/grafana`)'
       - 'traefik.http.services.grafana.loadbalancer.server.port=3000'
+      - 'traefik.http.routers.grafana.tls=true'
+      - 'traefik.http.routers.grafana.tls.certresolver=le'
       - 'traefik.http.middlewares.grafana-auth.forwardauth.address=http://pylon_auth:8080/forward-auth/auth?target=header&scope=grafana'
       - 'traefik.http.middlewares.grafana-auth.forwardauth.authResponseHeaders=X-WEBAUTH-USER,X-WEBAUTH-NAME,X-WEBAUTH-EMAIL'
       - 'traefik.http.routers.grafana.middlewares=grafana-auth@docker'
@@ -307,7 +322,7 @@ services:
         max-size: "10m"
     restart: unless-stopped
     container_name: carrier-pylon
-    user: ${UID}
+    # user: ${UID}
     depends_on:
       - postgres
       - traefik
@@ -326,11 +341,14 @@ services:
       - pylon
     labels:
       - 'traefik.enable=true'
-      - 'traefik.http.routers.pylon.rule=PathPrefix(`/`)'
+      - 'traefik.http.routers.pylon.rule=Host(`$APP_DOMAIN`) && PathPrefix(`/`)'
       - 'traefik.http.services.pylon.loadbalancer.server.port=8080'
+      - 'traefik.http.routers.pylon.tls=true'
+      - 'traefik.http.routers.pylon.tls.certresolver=le'
       - 'traefik.http.middlewares.pylon-auth.forwardauth.address=http://pylon_auth:8080/forward-auth/auth?target=rpc'
       - 'traefik.http.middlewares.pylon-auth.forwardauth.authResponseHeaders=X-Auth-Type,X-Auth-ID,X-Auth-Reference'
       - 'traefik.http.routers.pylon.middlewares=pylon-auth@docker'
+      - 'carrier=pylon'
 
   pylon_auth:
     image: getcarrier/pylon:latest
@@ -341,7 +359,7 @@ services:
         max-size: "10m"
     restart: unless-stopped
     container_name: carrier-pylon-auth
-    user: ${UID}
+    # user: ${UID}
     depends_on:
       - postgres
       - traefik
@@ -356,13 +374,16 @@ services:
     env_file:
       - .env
     environment:
-      - CORE_CONFIG_SEED=file:/data/config/pylon_auth.yml
+      - CORE_CONFIG_SEED=file:/data/config/pylon_auth_ssl.yml
     networks:
       - pylon
     labels:
       - 'traefik.enable=true'
-      - 'traefik.http.routers.pylon-auth.rule=PathPrefix(`/forward-auth`)'
+      - 'traefik.http.routers.pylon-auth.rule=Host(`$APP_DOMAIN`) && PathPrefix(`/forward-auth`)'
+      - 'traefik.http.routers.pylon-auth.tls=true'
+      - 'traefik.http.routers.pylon-auth.tls.certresolver=le'
       - 'traefik.http.services.pylon-auth.loadbalancer.server.port=8080'
+      - 'carrier=pylon-auth'
 
   pylon_worker:
     image: getcarrier/pylon:latest
@@ -373,7 +394,7 @@ services:
         max-size: "10m"
     restart: unless-stopped
     container_name: carrier-pylon-worker
-    user: ${UID}
+    # user: ${UID}
     depends_on:
       - traefik
       - loki
@@ -387,20 +408,11 @@ services:
     env_file:
       - .env
     environment:
-      - CORE_CONFIG_SEED=file:/data/config/pylon_worker.yml
+      - CORE_CONFIG_SEED=file:/data/config/pylon_worker_ssl.yml
     networks:
       - pylon
     labels:
       - 'traefik.enable=false'
-
-volumes:
-  postgre-data:
-  rabbit-data:
-  redis-data:
-  minio-data:
-  influx-data:
-  grafana-data:
-  mongo-data:
 
 networks:
   pylon:
